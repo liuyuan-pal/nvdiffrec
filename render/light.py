@@ -67,15 +67,16 @@ class EnvironmentLight(torch.nn.Module):
                         , (torch.clamp(roughness, self.MAX_ROUGHNESS, 1.0) - self.MAX_ROUGHNESS) / (1.0 - self.MAX_ROUGHNESS) + len(self.specular) - 2)
         
     def build_mips(self, cutoff=0.99):
-        self.specular = [self.base]
-        while self.specular[-1].shape[1] > self.LIGHT_MIN_RES:
-            self.specular += [cubemap_mip.apply(self.specular[-1])]
+        self.specular = [self.base] # 6,512,512,3
+        while self.specular[-1].shape[1] > self.LIGHT_MIN_RES: # 512>16
+            self.specular += [cubemap_mip.apply(self.specular[-1])] # average pooling
+            # 5 mips: 512,256,128,64,32,16
 
-        self.diffuse = ru.diffuse_cubemap(self.specular[-1])
+        self.diffuse = ru.diffuse_cubemap(self.specular[-1]) # 6,16,16,3
 
         for idx in range(len(self.specular) - 1):
             roughness = (idx / (len(self.specular) - 2)) * (self.MAX_ROUGHNESS - self.MIN_ROUGHNESS) + self.MIN_ROUGHNESS
-            self.specular[idx] = ru.specular_cubemap(self.specular[idx], roughness, cutoff) 
+            self.specular[idx] = ru.specular_cubemap(self.specular[idx], roughness, cutoff) # seems processed by roughness?
         self.specular[-1] = ru.specular_cubemap(self.specular[-1], 1.0, cutoff)
 
     def regularizer(self):

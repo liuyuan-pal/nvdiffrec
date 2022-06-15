@@ -26,7 +26,8 @@ class _MLP(torch.nn.Module):
         self.net = torch.nn.Sequential(*net).cuda()
         
         self.net.apply(self._init_weights)
-        
+
+        # x->net->features
         if self.loss_scale != 1.0:
             self.net.register_full_backward_hook(lambda module, grad_i, grad_o: (grad_i[0] * self.loss_scale, ))
 
@@ -62,12 +63,15 @@ class MLPTexture3D(torch.nn.Module):
         enc_cfg =  {
             "otype": "HashGrid",
             "n_levels": num_levels,
-            "n_features_per_level": 2,
-            "log2_hashmap_size": 19,
+            "n_features_per_level": 2, # feature dimension
+            "log2_hashmap_size": 19, # 2^19 entries on every table
             "base_resolution": base_grid_resolution,
             "per_level_scale" : per_level_scale
 	    }
 
+        # note this scale down the gradients!!
+        # xyz->encoding->net
+        # this function scales
         gradient_scaling = 128.0
         self.encoder = tcnn.Encoding(3, enc_cfg)
         self.encoder.register_full_backward_hook(lambda module, grad_i, grad_o: (grad_i[0] / gradient_scaling, ))

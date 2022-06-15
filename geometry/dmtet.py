@@ -166,19 +166,22 @@ class DMTetGeometry(torch.nn.Module):
 
         self.FLAGS         = FLAGS
         self.grid_res      = grid_res
-        self.marching_tets = DMTet()
+        self.marching_tets = DMTet() # three tables
 
-        tets = np.load('data/tets/{}_tets.npz'.format(self.grid_res))
+        tets = np.load('data/tets/{}_tets.npz'.format(self.grid_res)) # 32/64/128
         self.verts    = torch.tensor(tets['vertices'], dtype=torch.float32, device='cuda') * scale
-        self.indices  = torch.tensor(tets['indices'], dtype=torch.long, device='cuda')
-        self.generate_edges()
+        self.indices  = torch.tensor(tets['indices'], dtype=torch.long, device='cuda') # tet indices
+        self.generate_edges() # self.all_edges
 
         # Random init
         sdf = torch.rand_like(self.verts[:,0]) - 0.1
 
+        # sdf value
+        # how
         self.sdf    = torch.nn.Parameter(sdf.clone().detach(), requires_grad=True)
         self.register_parameter('sdf', self.sdf)
 
+        #
         self.deform = torch.nn.Parameter(torch.zeros_like(self.verts), requires_grad=True)
         self.register_parameter('deform', self.deform)
 
@@ -195,13 +198,13 @@ class DMTetGeometry(torch.nn.Module):
 
     def getMesh(self, material):
         # Run DM tet to get a base mesh
-        v_deformed = self.verts + 2 / (self.grid_res * 2) * torch.tanh(self.deform)
-        verts, faces, uvs, uv_idx = self.marching_tets(v_deformed, self.sdf, self.indices)
+        v_deformed = self.verts + 2 / (self.grid_res * 2) * torch.tanh(self.deform) # deform vertices
+        verts, faces, uvs, uv_idx = self.marching_tets(v_deformed, self.sdf, self.indices) # construct base mesh
         imesh = mesh.Mesh(verts, faces, v_tex=uvs, t_tex_idx=uv_idx, material=material)
 
         # Run mesh operations to generate tangent space
         imesh = mesh.auto_normals(imesh)
-        imesh = mesh.compute_tangents(imesh)
+        imesh = mesh.compute_tangents(imesh) # tangents?
 
         return imesh
 
@@ -225,7 +228,8 @@ class DMTetGeometry(torch.nn.Module):
 
         # Image-space loss, split into a coverage component and a color component
         color_ref = target['img']
-        img_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) 
+        img_loss = torch.nn.functional.mse_loss(buffers['shaded'][..., 3:], color_ref[..., 3:]) # coverage loss (mask loss)
+        # color loss
         img_loss = img_loss + loss_fn(buffers['shaded'][..., 0:3] * color_ref[..., 3:], color_ref[..., 0:3] * color_ref[..., 3:])
 
         # SDF regularizer

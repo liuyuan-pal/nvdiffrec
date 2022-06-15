@@ -19,7 +19,7 @@ import xatlas
 
 # Import data readers / generators
 from dataset.dataset_mesh import DatasetMesh
-from dataset.dataset_nerf import DatasetNERF
+from dataset.dataset_nerf import DatasetNERF, DatasetGen6D
 from dataset.dataset_llff import DatasetLLFF
 
 # Import topology / geometry trainers
@@ -134,9 +134,12 @@ def xatlas_uvmap(glctx, geometry, mat, FLAGS):
 ###############################################################################
 
 def initial_guess_material(geometry, mlp, FLAGS, init_mat=None):
-    kd_min, kd_max = torch.tensor(FLAGS.kd_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.kd_max, dtype=torch.float32, device='cuda')
-    ks_min, ks_max = torch.tensor(FLAGS.ks_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.ks_max, dtype=torch.float32, device='cuda')
-    nrm_min, nrm_max = torch.tensor(FLAGS.nrm_min, dtype=torch.float32, device='cuda'), torch.tensor(FLAGS.nrm_max, dtype=torch.float32, device='cuda')
+    kd_min, kd_max = torch.tensor(FLAGS.kd_min, dtype=torch.float32, device='cuda'), \
+                     torch.tensor(FLAGS.kd_max, dtype=torch.float32, device='cuda')
+    ks_min, ks_max = torch.tensor(FLAGS.ks_min, dtype=torch.float32, device='cuda'),\
+                     torch.tensor(FLAGS.ks_max, dtype=torch.float32, device='cuda')
+    nrm_min, nrm_max = torch.tensor(FLAGS.nrm_min, dtype=torch.float32, device='cuda'), \
+                       torch.tensor(FLAGS.nrm_max, dtype=torch.float32, device='cuda')
     if mlp:
         mlp_min = torch.cat((kd_min[0:3], ks_min, nrm_min), dim=0)
         mlp_max = torch.cat((kd_max[0:3], ks_max, nrm_max), dim=0)
@@ -330,6 +333,7 @@ def optimize_mesh(
     # ==============================================================================================
     #  Image loss
     # ==============================================================================================
+    # note loss is scaled according to the rgb type(srgb needs logl1 and tonemap)
     image_loss_fn = createLoss(FLAGS)
 
     trainer_noddp = Trainer(glctx, geometry, lgt, opt_material, optimize_geometry, optimize_light, image_loss_fn, FLAGS)
@@ -426,6 +430,7 @@ def optimize_mesh(
         #  Backpropagate
         # ==============================================================================================
         total_loss.backward()
+        # scale the gradient!!
         if hasattr(lgt, 'base') and lgt.base.grad is not None and optimize_light:
             lgt.base.grad *= 64
         if 'kd_ks_normal' in opt_material:
@@ -441,6 +446,7 @@ def optimize_mesh(
         # ==============================================================================================
         #  Clamp trainables to reasonable range
         # ==============================================================================================
+        # only used in mesh optimization (not in mlp material)
         with torch.no_grad():
             if 'kd' in opt_material:
                 opt_material['kd'].clamp_()
@@ -569,12 +575,16 @@ if __name__ == "__main__":
         elif os.path.isfile(os.path.join(FLAGS.ref_mesh, 'transforms_train.json')):
             dataset_train    = DatasetNERF(os.path.join(FLAGS.ref_mesh, 'transforms_train.json'), FLAGS, examples=(FLAGS.iter+1)*FLAGS.batch)
             dataset_validate = DatasetNERF(os.path.join(FLAGS.ref_mesh, 'transforms_test.json'), FLAGS)
+    elif FLAGS.ref_mesh=='gen6d':
+        dataset_train    = DatasetGen6D(FLAGS.gen6d_obj, FLAGS, True)
+        dataset_validate = DatasetGen6D(FLAGS.gen6d_obj, FLAGS, False)
 
     # ==============================================================================================
     #  Create env light with trainable parameters
     # ==============================================================================================
     
     if FLAGS.learn_light:
+        # 6*512*512*3, scale to 0, offset by 0.5
         lgt = light.create_trainable_env_rnd(512, scale=0.0, bias=0.5)
     else:
         lgt = light.load_env(FLAGS.envmap, scale=FLAGS.env_scale)
@@ -585,13 +595,14 @@ if __name__ == "__main__":
         # ==============================================================================================
 
         # Setup geometry for optimization
+        # FLAGS.dmtet_grid=128/FLAGS.mesh_scale=3.0
         geometry = DMTetGeometry(FLAGS.dmtet_grid, FLAGS.mesh_scale, FLAGS)
 
         # Setup textures, make initial guess from reference if possible
         mat = initial_guess_material(geometry, True, FLAGS)
     
         # Run optimization
-        geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate, 
+        geometry, mat = optimize_mesh(glctx, geometry, mat, lgt, dataset_train, dataset_validate,
                         FLAGS, pass_idx=0, pass_name="dmtet_pass1", optimize_light=FLAGS.learn_light)
 
         if FLAGS.local_rank == 0 and FLAGS.validate:

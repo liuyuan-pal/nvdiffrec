@@ -18,7 +18,8 @@ from . import util
 # Base mesh class
 ######################################################################################
 class Mesh:
-    def __init__(self, v_pos=None, t_pos_idx=None, v_nrm=None, t_nrm_idx=None, v_tex=None, t_tex_idx=None, v_tng=None, t_tng_idx=None, material=None, base=None):
+    def __init__(self, v_pos=None, t_pos_idx=None, v_nrm=None, t_nrm_idx=None,
+                 v_tex=None, t_tex_idx=None, v_tng=None, t_tng_idx=None, material=None, base=None):
         self.v_pos = v_pos
         self.v_nrm = v_nrm
         self.v_tex = v_tex

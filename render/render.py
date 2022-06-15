@@ -41,6 +41,7 @@ def shade(
     ################################################################################
     perturbed_nrm = None
     if 'kd_ks_normal' in material:
+        # spatial texture
         # Combined texture, used for MLPs because lookups are expensive
         all_tex_jitter = material['kd_ks_normal'].sample(gb_pos + torch.normal(mean=0, std=0.01, size=gb_pos.shape, device="cuda"))
         all_tex = material['kd_ks_normal'].sample(gb_pos)
@@ -49,6 +50,7 @@ def shade(
         # Compute albedo (kd) gradient, used for material regularizer
         kd_grad    = torch.sum(torch.abs(all_tex_jitter[..., :-6] - all_tex[..., :-6]), dim=-1, keepdim=True) / 3
     else:
+        # fixed texture on surface
         kd_jitter  = material['kd'].sample(gb_texc + torch.normal(mean=0, std=0.005, size=gb_texc.shape, device="cuda"), gb_texc_deriv)
         kd = material['kd'].sample(gb_texc, gb_texc_deriv)
         ks = material['ks'].sample(gb_texc, gb_texc_deriv)[..., 0:3] # skip alpha
@@ -132,7 +134,7 @@ def render_layer(
         rast_out_s = util.scale_img_nhwc(rast, resolution, mag='nearest', min='nearest')
         rast_out_deriv_s = util.scale_img_nhwc(rast_deriv, resolution, mag='nearest', min='nearest') * spp
     else:
-        rast_out_s = rast
+        rast_out_s = rast # u,v,d/w,id
         rast_out_deriv_s = rast_deriv
 
     ################################################################################
@@ -228,6 +230,7 @@ def render_mesh(
     with dr.DepthPeeler(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res) as peeler:
         for _ in range(num_layers):
             rast, db = peeler.rasterize_next_layer()
+            # {shaded, kd_grad, occlusion}
             layers += [(render_layer(rast, db, mesh, view_pos, lgt, resolution, spp, msaa, bsdf), rast)]
 
     # Setup background
@@ -242,8 +245,10 @@ def render_mesh(
     out_buffers = {}
     for key in layers[0][0].keys():
         if key == 'shaded':
-            accum = composite_buffer(key, layers, background, True)
+            # add background to shaded
+            accum = composite_buffer(key, layers, background, True) # note this apply anti-alias
         else:
+            # zero out regions with alpha=0
             accum = composite_buffer(key, layers, torch.zeros_like(layers[0][0][key]), False)
 
         # Downscale to framebuffer resolution. Use avg pooling 
