@@ -36,6 +36,10 @@ gen6d_meta_info={
     'piggy': {'gravity': np.asarray((-0.122392, -0.344009, -0.930955), np.float32), 'forward': np.asarray([0.079012,1.441836,-0.524981], np.float32)},
     'plug_en2': {'gravity': np.asarray((-0.15223,-0.205333,-0.96678), np.float32), 'forward': np.asarray([ 1.258604, 0.206405,-0.247187], np.float32)},
     'chair2': {'gravity': np.asarray((-0.0803511,-0.120156,-0.989498), np.float32), 'forward': np.asarray([-1.074559,0.946239,-0.075782], np.float32)},
+    'ms': {'gravity': np.asarray((-0.0452898, -0.550408, -0.833667), np.float32), 'forward': np.asarray([2.396784, -0.617233, 0.282476], np.float32)},
+'ms_img': {'gravity': np.asarray((-0.114489, -0.354257, -0.928113), np.float32), 'forward': np.asarray([2.536366, -2.077406, 0.469369], np.float32)},
+    'msc': {'gravity': np.asarray((-0.0875676, -0.467641, -0.87957), np.float32), 'forward': np.asarray([-1.813946, 0.167721, 0.094638], np.float32)},
+    'rbc': {'gravity': np.asarray((-0.0195442, 0.0326932, -0.999274), np.float32), 'forward': np.asarray([2.093818, 0.160778, -0.165973], np.float32)},
 }
 
 class Gen6DMetaInfoWrapper:
@@ -178,6 +182,66 @@ def get_projected_mask(pc,pose,K,h,w):
     kernel = np.ones((7, 7), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     return mask
+
+def get_pr_mask(pr, pc, img, pose, K):
+    h, w, _ = img.shape
+    pts2d = project_points(pc, pose, K)[0]
+    pts2d = np.round(pts2d).astype(np.int32)
+    xs, ys = pts2d[:, 0], pts2d[:, 1]
+    xs[xs < 0] = 0; xs[xs >= w] = w - 1
+    ys[ys < 0] = 0; ys[ys >= h] = h - 1
+    x_min, x_max = np.min(xs), np.max(xs)
+    y_min, y_max = np.min(ys), np.max(ys)
+
+    region = img[y_min:y_max,x_min:x_max]
+    outputs = pr(region)
+    mask_out = outputs['instances'][0].pred_masks[0].cpu().numpy()
+    mask = np.zeros([h,w], dtype=np.bool)
+    mask[y_min:y_max,x_min:x_max] = mask_out
+    return np.asarray(mask, np.uint8) * 255
+
+def get_grab_cut_mask(img, pc, pose, K, ksize=11, iter=5):
+    h, w, _ = img.shape
+    pts2d = project_points(pc, pose, K)[0]
+    pts2d = np.round(pts2d).astype(np.int32)
+    xs, ys = pts2d[:, 0], pts2d[:, 1]
+    xs[xs < 0] = 0; xs[xs >= w] = w - 1
+    ys[ys < 0] = 0; ys[ys >= h] = h - 1
+
+    # # bounding box
+    # x_min, x_max = np.min(xs), np.max(xs)
+    # y_min, y_max = np.min(ys), np.max(ys)
+
+    mask_bg = np.zeros([h, w], np.uint8)
+    mask_bg[ys, xs] = 255
+    kernel = np.ones((ksize, ksize), np.uint8)
+    mask_bg = cv2.dilate(mask_bg, kernel)
+    mask_bg = (mask_bg==0)
+
+    mask_fg = np.zeros([h, w], np.uint8)
+    mask_fg[ys, xs] = 255
+    # kernel = np.ones((ksize, ksize), np.uint8)
+    # mask_fg = cv2.morphologyEx(mask_fg, cv2.MORPH_OPEN, kernel)
+    kernel = np.ones((3, 3), np.uint8)
+    mask_fg = cv2.erode(mask_fg, kernel, iterations=4)
+    mask_fg = (mask_fg > 0)
+
+    mask = np.zeros([h, w], np.uint8)
+    mask[mask_bg] = 0
+    mask[mask_fg] = 1
+    mask[(~mask_fg)&(~mask_bg)] = 2
+
+    # imsave(f'data/vis_val/bg.jpg', img*(mask==0)[:,:,None])
+    # imsave(f'data/vis_val/fg.jpg', img*(mask==1)[:,:,None])
+    # imsave(f'data/vis_val/un.jpg', img*(mask==2)[:,:,None])
+
+    cv2.grabCut(img, mask, (0,0,0,0), np.zeros([1,65],np.float64), np.zeros([1,65],np.float64), iter, cv2.GC_INIT_WITH_MASK)
+    mask_out = (mask==1) | (mask==3)
+    mask_out = np.asarray(mask_out, np.uint8)*255
+
+    # imsave(f'data/vis_val/out.jpg', img * (mask_out>0)[:, :, None])
+    # import ipdb; ipdb.set_trace()
+    return mask_out
 
 class Gen6DRefDatabase(BaseDatabase):
     # this class is only in charge read out the poses from colmap

@@ -15,6 +15,7 @@ from pathlib import Path
 import torch
 import numpy as np
 from skimage.io import imread, imsave
+from tqdm import tqdm
 
 from dataset.base_utils import read_pickle, save_pickle
 from colmap.read_write_model import read_model
@@ -25,7 +26,7 @@ from .dataset import Dataset
 ###############################################################################
 # NERF image based dataset (synthetic)
 ###############################################################################
-from .gen6d_utils import Gen6D_ROOT, Gen6DMetaInfoWrapper, get_projected_mask
+from .gen6d_utils import Gen6D_ROOT, Gen6DMetaInfoWrapper, get_projected_mask, get_grab_cut_mask, get_pr_mask
 
 
 def _load_img(path):
@@ -98,6 +99,22 @@ class DatasetNERF(Dataset):
             'img' : img # note this image is transformed by srgb_to_rgb
         }
 
+
+def load_pr():
+    import detectron2
+    from detectron2 import model_zoo
+    from detectron2.projects import point_rend
+    from detectron2.engine import DefaultPredictor
+
+    cfg = detectron2.config.get_cfg()
+    point_rend.add_pointrend_config(cfg)
+    # Load a config from file
+    cfg.merge_from_file("detectron2_repo/projects/PointRend/configs/InstanceSegmentation/pointrend_rcnn_R_50_FPN_3x_coco.yaml")
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
+    # Use a model from PointRend model zoo: https://github.com/facebookresearch/detectron2/tree/master/projects/PointRend#pretrained-models
+    cfg.MODEL.WEIGHTS = "detectron2://PointRend/InstanceSegmentation/pointrend_rcnn_R_50_FPN_3x_coco/164955410/model_final_edd263.pkl"
+    predictor = DefaultPredictor(cfg)
+    return predictor
 
 class DatasetGen6D(Dataset):
     def __init__(self, seq_name, FLAGS, is_train):
@@ -174,17 +191,48 @@ class DatasetGen6D(Dataset):
             self.res = [h, w]
 
     def _compute_mask(self):
-        self.mask_dir=f'{str(self.root)}/masks_proj'
-        Path(self.mask_dir).mkdir(exist_ok=True,parents=True)
-        # compute mask from projected point clouds
-        for img_id, pose in self.poses.items():
-            if (Path(self.mask_dir) / f'{img_id}.png').exists():
-                continue
-            K = self.Ks[img_id]
-            h, w, _ = imread(str(self.image_path/self.img_fns[int(img_id)])).shape
-            mask = get_projected_mask(self.meta_info.object_point_cloud, self.poses[img_id], K, h, w)
-            mask = np.asarray(mask,np.uint8)
-            imsave(f'{self.mask_dir}/{img_id}.png', mask)
+        if self.FLAGS.point_rend_mask:
+            self.mask_dir = f'{str(self.root)}/masks_pr'
+            Path(self.mask_dir).mkdir(exist_ok=True,parents=True)
+            # compute mask from projected point clouds
+            print('generate grab cut masks ...')
+            pr=None
+            for img_id, pose in tqdm(self.poses.items()):
+                if (Path(self.mask_dir) / f'{img_id}.png').exists(): continue
+                if pr is None:
+                    pr = load_pr()
+                K = self.Ks[img_id]
+                img = imread(str(self.image_path/self.img_fns[int(img_id)]))
+                h, w, _ = img.shape
+                mask = get_pr_mask(pr, self.meta_info.object_point_cloud, img, self.poses[img_id], K)
+                mask = np.asarray(mask,np.uint8)
+                # imsave(f'data/vis_val/cur.jpg', img*(mask>0)[:,:,None])
+                imsave(f'{self.mask_dir}/{img_id}.png', mask)
+        else:
+            if self.FLAGS.grab_cut_mask:
+                self.mask_dir=f'{str(self.root)}/masks_grab'
+                Path(self.mask_dir).mkdir(exist_ok=True,parents=True)
+                # compute mask from projected point clouds
+                print('generate grab cut masks ...')
+                for img_id, pose in tqdm(self.poses.items()):
+                    if (Path(self.mask_dir) / f'{img_id}.png').exists(): continue
+                    K = self.Ks[img_id]
+                    img = imread(str(self.image_path/self.img_fns[int(img_id)]))
+                    mask = get_grab_cut_mask(img, self.meta_info.object_point_cloud, self.poses[img_id], K)
+                    mask = np.asarray(mask,np.uint8)
+                    imsave(f'{self.mask_dir}/{img_id}.png', mask)
+            else:
+                self.mask_dir=f'{str(self.root)}/masks_proj'
+                Path(self.mask_dir).mkdir(exist_ok=True,parents=True)
+                # compute mask from projected point clouds
+                for img_id, pose in self.poses.items():
+                    if (Path(self.mask_dir) / f'{img_id}.png').exists():
+                        continue
+                    K = self.Ks[img_id]
+                    h, w, _ = imread(str(self.image_path/self.img_fns[int(img_id)])).shape
+                    mask = get_projected_mask(self.meta_info.object_point_cloud, self.poses[img_id], K, h, w)
+                    mask = np.asarray(mask,np.uint8)
+                    imsave(f'{self.mask_dir}/{img_id}.png', mask)
 
     def _load_colmap_data(self):
         # load colmap model

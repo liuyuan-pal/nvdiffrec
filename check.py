@@ -2,7 +2,7 @@ import nvdiffrast.torch as dr
 import collections
 
 import torch
-from skimage.io import imsave
+from skimage.io import imsave, imread
 
 import render.renderutils as ru
 import numpy as np
@@ -60,4 +60,26 @@ def check_projection():
     imsave('data/vis_val/raw.jpg', draw_keypoints(img[0,...,:3], pts2d_))
     imsave('data/vis_val/tmp.jpg', mask[...,:3])
 
-check_projection()
+def generate_detectron_mask():
+    import detectron2
+    from detectron2 import model_zoo
+    from detectron2.projects import point_rend
+    from detectron2.engine import DefaultPredictor
+
+    cfg = detectron2.config.get_cfg()
+    point_rend.add_pointrend_config(cfg)
+    # Load a config from file
+    cfg.merge_from_file("detectron2_repo/projects/PointRend/configs/InstanceSegmentation/pointrend_rcnn_R_50_FPN_3x_coco.yaml")
+    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5  # set threshold for this model
+    # Use a model from PointRend model zoo: https://github.com/facebookresearch/detectron2/tree/master/projects/PointRend#pretrained-models
+    cfg.MODEL.WEIGHTS = "detectron2://PointRend/InstanceSegmentation/pointrend_rcnn_R_50_FPN_3x_coco/164955410/model_final_edd263.pkl"
+    predictor = DefaultPredictor(cfg)
+
+    # imread
+    img = imread(f'data/gen6d/ms-ref/images/frame0.jpg')
+    outputs = predictor(img)
+    import ipdb; ipdb.set_trace()
+
+generate_detectron_mask()
+
+# check_projection()

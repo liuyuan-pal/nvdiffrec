@@ -525,6 +525,8 @@ if __name__ == "__main__":
     FLAGS.nrm_max             = [ 1.0,  1.0,  1.0]
     FLAGS.cam_near_far        = [0.1, 1000.0]
     FLAGS.learn_light         = True
+    FLAGS.grab_cut_mask       = False  # use grab mask or not
+    FLAGS.point_rend_mask     = False  # use grab mask or not
 
     FLAGS.local_rank = 0
     FLAGS.multi_gpu  = "WORLD_SIZE" in os.environ and int(os.environ["WORLD_SIZE"]) > 1
